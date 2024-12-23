@@ -29,7 +29,7 @@ class AttentionModule(nn.Module):
         self.query = nn.Parameter(torch.randn(embedding_dim))
 
     def forward(self, embeddings):
-        scores = torch.matmul(embeddings, self.query)  # Assuming [seq_length, embedding_dim]
+        scores = torch.matmul(embeddings, self.query)
         attention_weights = F.softmax(scores, dim=0)
         weighted_sum = torch.einsum('n,nm->m', attention_weights, embeddings)
         return weighted_sum
@@ -70,9 +70,7 @@ class SessionDataset(Dataset):
             self.subject_ids = [33, 26, 3, 36, 22, 23, 37, 5, 27]
         else:
             raise ValueError("Invalid subset type. Choose from 'train', 'val', or 'test'.")
-        
-        # Assuming there's a column in your CSV that indicates the subject ID for each session
-        # Adjust the column name 'SubjectID' according to your actual CSV format
+    
         self.data = self.data[self.data['SubjectID'].isin(self.subject_ids)]
         
     def extract_subject_id(self, filename):
@@ -81,7 +79,7 @@ class SessionDataset(Dataset):
         if match:
             return int(match.group(1))  # Return the subject ID as integer
         else:
-            return None  # or raise an error, depending on how you want to handle files without a valid format
+            return None  # raise an error
 
     def __len__(self):
         return len(self.data['Filename'].unique())
@@ -142,16 +140,14 @@ class SessionDataset(Dataset):
 
         return aggregated_embedding, torch.tensor(cosc_labels, dtype=torch.float)
 
-# Initialize CLAP model (adjust path and settings as needed)
+# Initialize CLAP model
 clap_model = CLAP(version='2023', use_cuda=device.type == 'cuda')
 print("CLAP model loaded successfully")
 
-# Example dataset and dataloader initialization
 df_for_training = pd.read_csv('/dgxhome/sxb701/Amanda_Speech_Transcript_Data/Codes/SCORED_short_useful_imputed.csv')
 csv_path = '/dgxhome/sxb701/Amanda_Speech_Transcript_Data/Codes/updated_transcript_selected_with_id_survey_no.csv'
 audio_base_folder = '/dgxhome/sxb701/Amanda_Speech_Transcript_Data/'
 
-# Assuming you have a function or loop to handle this
 def create_datasets_and_loaders(scenario):
     summary_file = summary_paths[scenario]
     train_dataset = SessionDataset(csv_path, audio_base_folder, summary_file, clap_model, df_for_training, 1024, scenario, 'train')
@@ -166,7 +162,6 @@ def create_datasets_and_loaders(scenario):
 class MultimodalTransformer(nn.Module):
     def __init__(self, input_dim, num_heads, num_encoder_layers, num_cos_labels):
         super(MultimodalTransformer, self).__init__()
-        # Transformer Encoder Layer
         self.encoder_layer = nn.TransformerEncoderLayer(d_model=input_dim, nhead=num_heads)
         self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=num_encoder_layers)
         
@@ -174,20 +169,12 @@ class MultimodalTransformer(nn.Module):
         self.cos_head = nn.Linear(input_dim, num_cos_labels)  # COSC output layer
 
     def forward(self, x, mask=None):
-        # x: batch_size x seq_len x input_dim
-        # Transform x to match transformer input dimensions: seq_len x batch_size x input_dim
         x = x.unsqueeze(1)  # Now x has shape [batch_size, 1, embedding_dim]
         x = x.permute(1, 0, 2)
-        
-        # Passing the input through the Transformer encoder
         transformed = self.transformer_encoder(x, src_key_padding_mask=mask)
-        
-        # Reverting dimensions to batch_size x seq_len x input_dim
         transformed = transformed.permute(1, 0, 2)
-        
         # Pooling over the seq_len dimension to get a single representation for the session
         pooled = torch.mean(transformed, dim=1)
-        
         # Getting output for both tasks
         cosc_output = self.cos_head(pooled)  # Predictions for COSC
 
@@ -268,7 +255,7 @@ def train_model(model, train_dataloader, val_dataloader, optimizer, scheduler, d
 def evaluate_model_per_variable(model, dataloader, device):
     model.eval()
     total_loss = 0
-    variable_losses = torch.zeros(12, device=device)  # Assuming 12 variables
+    variable_losses = torch.zeros(12, device=device)  #12 variables
     count = 0
     with torch.no_grad():
         for batch in dataloader:
@@ -291,13 +278,11 @@ weights_values = [3.98, 4.22, 6.10, 7.54, 0.05, 0.11, 1.11, 1.83, 0.84, 0.90, 0.
 deltas = torch.tensor(deltas_values, dtype=torch.float32, device=device)
 weights = torch.tensor(weights_values, dtype=torch.float32, device=device)
 
-# Assuming you have dataset variants for each scenario
 summary_paths = {
     'no_summary': None,  # No summary data
     'only_phi2': '/dgxhome/sxb701/Amanda_Speech_Transcript_Data/Codes/classified_session_transcriptions_with_speakers_phi2_all.csv',
     'only_meditron': '/dgxhome/sxb701/Amanda_Speech_Transcript_Data/Codes/classified_session_transcriptions_with_speakers_meditron_all.csv',
     'only_llama2': '/dgxhome/sxb701/Amanda_Speech_Transcript_Data/Codes/classified_session_transcriptions_with_speakers_meditron_all.csv',
-    #'all': '/path/to/combined/summary.csv',  # Assuming you have a way to combine summaries
 }
 
 # # Initialize dataset instances for each scenario
@@ -314,30 +299,19 @@ summary_paths = {
 #     )
 
 # Initialize the model and optimizer
-model = MultimodalTransformer(input_dim=1024, num_heads=8, num_encoder_layers=6, num_cos_labels=12).to(device)  # Adjust num_cos_labels if needed
+model = MultimodalTransformer(input_dim=1024, num_heads=8, num_encoder_layers=6, num_cos_labels=12).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
-
-# Iterate over scenarios
-
 scenarios = ['no_summary', 'only_phi2', 'only_meditron', 'only_llama2']
 for scenario in scenarios:
-    # Create DataLoaders for the current scenario
     train_loader, val_loader, test_loader = create_datasets_and_loaders(scenario)
-
-    # Initialize a fresh model for each scenario
     model = MultimodalTransformer(input_dim=1024, num_heads=8, num_encoder_layers=6, num_cos_labels=12).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
     scheduler = ReduceLROnPlateau(optimizer, 'min', factor=0.8, patience=5, verbose=True)
-    
-    # Train the model with the scenario-specific train and val DataLoaders
     train_model(model, train_loader, val_loader, optimizer, scheduler, deltas, weights, num_epochs=100)
-
-    # Save the trained model specific to the scenario
     torch.save(model.state_dict(), f'model_{scenario}.pth')
-
     # Load the scenario-specific trained model for evaluation
     model.load_state_dict(torch.load(f'model_{scenario}.pth'))
-    variable_losses = evaluate_model_per_variable(model, test_loader, device)  # Use the correct test_loader
+    variable_losses = evaluate_model_per_variable(model, test_loader, device)
     print(f"Results for {scenario}:")
     for i, loss in enumerate(variable_losses):
         print(f"Variable {i+1} MSE: {loss}")
